@@ -6,11 +6,19 @@ const edit_typhoon = document.getElementById("edit_typhoon_reg_submit");
 const edit_typhoon_name = document.getElementById("edit_typhoon_name");
 const edit_signal_number = document.getElementById("edit_signal_number");
 const edit_will_landfall_in = document.getElementById("edit_will_landfall_in");
+const delete_typhoon_btn = document.getElementById("delete_typhoon");
 const firestore = firebase.firestore();
 const typhoonsRef = firestore.collection("typhoons");
 const typhoons = [];
-const users = [];
+const yolanda_users = [];
+const habagat_users = [];
 
+const renderTyphoonInformation = (typhoon) => {
+	edit_typhoon_name.value = typhoon.name;
+	edit_signal_number.value = typhoon.signal_number;
+	const date = toDatetimeLocal(new Date(typhoon.landfall));
+	edit_will_landfall_in.value = date;
+};
 let typhoon;
 import { scenario1, scenario2, scenario3 } from "./API.js";
 let myChart;
@@ -30,6 +38,22 @@ const requests_from_yolanda = {
 	timugan: 0,
 	"putho-tuntungin": 0,
 };
+const requests_from_habagat = {
+	anos: 0,
+	"bagong silang": 0,
+	bambang: 77,
+	"batong malake": 0,
+	baybayin: 15,
+	bayog: 0,
+	lalakay: 0,
+	maahas: 0,
+	malinta: 2,
+	mayondon: 22,
+	"san antonio": 0,
+	tadlac: 8,
+	timugan: 0,
+	"putho-tuntungin": 0,
+};
 const BARANGAYS = [
 	"anos",
 	"bagong silang",
@@ -46,6 +70,19 @@ const BARANGAYS = [
 	"tadlac",
 	"timugan",
 ];
+delete_typhoon_btn.addEventListener("click", (e) => {
+	e.preventDefault();
+	if (confirm(`Delete typhoon ${typhoon.name}?`) == true) {
+		firestore
+			.collection("typhoons")
+			.doc(typhoon.id)
+			.delete()
+			.then(() => location.reload())
+			.catch((e) => console.log(e));
+	} else {
+		console.log("You canceled!");
+	}
+});
 edit_typhoon.addEventListener("click", (event) => {
 	event.preventDefault();
 	if (edit_typhoon.innerText == "Update") {
@@ -90,17 +127,30 @@ edit_typhoon.addEventListener("click", (event) => {
 		edit_typhoon.innerText = "Update";
 	}
 });
-const generate_users = () => {
+const generate_users = (typhoon_name) => {
 	for (const i in BARANGAYS) {
-		for (let j = 0; j < requests_from_yolanda[BARANGAYS[i]]; j++) {
-			const user = {
-				id: `${BARANGAYS[i]}${[j]}`,
-				barangay: BARANGAYS[i],
-				name: `${BARANGAYS[i]}${[j]}`,
-				isSenior: Math.random() < 0.046,
-				livesWith: Math.random() < 5 ? Math.floor(Math.random() * 5) + 1 : 0,
-			};
-			users.push(user);
+		if (typhoon_name == "Yolanda") {
+			for (let j = 0; j < requests_from_yolanda[BARANGAYS[i]]; j++) {
+				const user = {
+					id: `${BARANGAYS[i]}${[j]}`,
+					barangay: BARANGAYS[i],
+					name: `${BARANGAYS[i]}${[j]}`,
+					isSenior: Math.random() < 0.046,
+					livesWith: Math.random() < 5 ? Math.floor(Math.random() * 5) + 1 : 0,
+				};
+				yolanda_users.push(user);
+			}
+		} else if (typhoon_name == "Habagat") {
+			for (let j = 0; j < requests_from_habagat[BARANGAYS[i]]; j++) {
+				const user = {
+					id: `${BARANGAYS[i]}${[j]}`,
+					barangay: BARANGAYS[i],
+					name: `${BARANGAYS[i]}${[j]}`,
+					isSenior: Math.random() < 0.046,
+					livesWith: Math.random() < 5 ? Math.floor(Math.random() * 5) + 1 : 0,
+				};
+				habagat_users.push(user);
+			}
 		}
 	}
 };
@@ -161,8 +211,19 @@ typhoonsRef.onSnapshot((querySnapshot) => {
 				} else if (typhoon_name === "Yolanda") {
 					requests_from = requests_from_yolanda;
 
-					for (const i in users) {
-						addRow(users[i], false);
+					for (const i in yolanda_users) {
+						addRow(yolanda_users[i], "NECCESSARY");
+					}
+					renderTyphoonInformation(typhoon);
+					const color = generate_colors(requests_from)[0];
+					myChart.destroy();
+					renderChart(requests_from, color);
+					renderMap(color);
+				} else if (typhoon_name === "Habagat") {
+					requests_from = requests_from_habagat;
+
+					for (const i in habagat_users) {
+						addRow(habagat_users[i], "NECCESSARY");
 					}
 					renderTyphoonInformation(typhoon);
 					const color = generate_colors(requests_from)[0];
@@ -174,6 +235,31 @@ typhoonsRef.onSnapshot((querySnapshot) => {
 						requests_from[BARANGAYS[i]] = 0;
 					}
 					renderTyphoonInformation(typhoon);
+					if (typhoon.signal_number >= 3) {
+						firestore
+							.collection("users")
+							.get()
+							.then((querySnapshot) => {
+								querySnapshot.forEach((doc) => {
+									if (
+										doc.data().isSenior ||
+										doc.data().isPWD ||
+										doc.data().isInFloodingArea ||
+										doc.data().isInLandslideArea
+									) {
+										const adder = doc.data().livesWith
+											? doc.data().livesWith
+											: 0;
+										requests_from[doc.data().barangay.toLowerCase()] += 1;
+										addRow(doc.data(), "FORCE");
+									}
+								});
+								const color = generate_colors(requests_from)[0];
+								myChart.destroy();
+								renderChart(requests_from, color);
+								renderMap(color);
+							});
+					}
 					for (const i in typhoon.to_immediate_evacuate) {
 						firestore
 							.collection("users")
@@ -182,12 +268,16 @@ typhoonsRef.onSnapshot((querySnapshot) => {
 							.then((res) => {
 								const adder = res.data().livesWith ? res.data().livesWith : 0;
 								requests_from[res.data().barangay.toLowerCase()] += 1;
-								addRow(res.data(), true);
+								addRow(res.data(), "IMMIDIATE");
 								if (i == typhoon.to_immediate_evacuate.length - 1) {
 									const color = generate_colors(requests_from)[0];
 									myChart.destroy();
 									renderChart(requests_from, color);
 									renderMap(color);
+									let pager = new Pager("pager", 5);
+									pager.init();
+									pager.showPageNav("pager", "pageNavPosition");
+									pager.showPage(1);
 								}
 							});
 					}
@@ -200,19 +290,22 @@ typhoonsRef.onSnapshot((querySnapshot) => {
 								const adder = res.data().livesWith ? res.data().livesWith : 0;
 								requests_from[res.data().barangay.toLowerCase()] += 1;
 
-								addRow(res.data(), false);
+								addRow(res.data(), "NECCESSARY");
 								if (i == typhoon.to_evacuate.length - 1) {
 									const color = generate_colors(requests_from)[0];
 									myChart.destroy();
 									renderChart(requests_from, color);
 									renderMap(color);
+									let pager = new Pager("pager", 5);
+									pager.init();
+									pager.showPageNav("pager", "pageNavPosition");
+									pager.showPage(1);
 								}
 							});
 					}
 				}
 
 				let pager = new Pager("pager", 5);
-
 				pager.init();
 				pager.showPageNav("pager", "pageNavPosition");
 				pager.showPage(1);
@@ -443,33 +536,42 @@ const generate_colors = (requests) => {
 	}
 	return [colors, second_colors];
 };
-const get_users = () => {
-	generate_users();
+const get_users = (typhoon_name) => {
+	generate_users(typhoon_name);
 	const user_names = [];
-	for (const i in users) {
-		user_names.push(users[i].id);
+	if (typhoon_name == "Yolanda") {
+		for (const i in yolanda_users) {
+			user_names.push(yolanda_users[i].id);
+		}
+	} else {
+		for (const i in habagat_users) {
+			user_names.push(habagat_users[i].id);
+		}
 	}
 	return user_names;
 };
 const yolanda_test_data = {
 	immediate_evacuation: true,
 	name: "Yolanda",
-	signal_number: 4,
+	signal_number: 3,
 	landfall: new Date("Nov 3, 2013 00:00:00"),
-	to_evacuate: get_users(),
+	to_evacuate: get_users("Yolanda"),
+	to_immediate_evacuate: [],
+};
+const habagat_test_data = {
+	immediate_evacuation: true,
+	name: "Habagat",
+	signal_number: 3,
+	landfall: new Date("Sept 26, 2013 00:00:00"),
+	to_evacuate: get_users("Habagat"),
 	to_immediate_evacuate: [],
 };
 typhoon = yolanda_test_data;
 typhoons.push(yolanda_test_data);
+typhoons.push(habagat_test_data);
 const color = generate_colors(requests_from_yolanda)[0];
 renderChart(requests_from_yolanda, color);
 renderMap(color);
-const renderTyphoonInformation = (typhoon) => {
-	edit_typhoon_name.value = typhoon.name;
-	edit_signal_number.value = typhoon.signal_number;
-	const date = toDatetimeLocal(new Date(typhoon.landfall));
-	edit_will_landfall_in.value = date;
-};
 function toDatetimeLocal(d) {
 	const date = new Date(d),
 		ten = (i) => (i < 10 ? "0" : "") + i,
@@ -483,6 +585,9 @@ function toDatetimeLocal(d) {
 	return `${YYYY}-${MTH}-${DAY}T${HH}:${MM}:${SS}`;
 }
 renderTyphoonInformation(yolanda_test_data);
+for (const i in yolanda_users) {
+	addRow(yolanda_users[i], "NECCESSARY");
+}
 
 typhoon_reg_submit.addEventListener("click", function (e) {
 	e.preventDefault();
@@ -514,7 +619,7 @@ typhoon_reg_submit.addEventListener("click", function (e) {
 		}
 	}
 });
-function addRow(user, immediate_evacuation) {
+function addRow(user, evac_type) {
 	// Get a reference to the table
 	let tableRef = document.getElementById("pager");
 	// Insert a row at the end of the table
@@ -536,12 +641,6 @@ function addRow(user, immediate_evacuation) {
 	addressCell.appendChild(addressText);
 	let familyText = document.createTextNode(user.livesWith);
 	familyCell.appendChild(familyText);
-	let immediateEvacText = document.createTextNode(
-		immediate_evacuation ? "YES" : "NO",
-	);
+	let immediateEvacText = document.createTextNode(evac_type);
 	immediateEvacCell.appendChild(immediateEvacText);
-}
-
-for (const i in users) {
-	addRow(users[i]);
 }
